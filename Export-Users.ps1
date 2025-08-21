@@ -4,82 +4,83 @@
     генерируя для каждого новый случайный пароль.
 
 .DESCRIPTION
-    Этот скрипт предназначен для подготовки к миграции пользователей. Он получает список
-    всех активных локальных пользователей (исключая системные), генерирует для каждого
-    новый надежный пароль и сохраняет результат в файл формата "имя<ТАБ>пароль".
-    Работает в любой версии PowerShell.
+    Скрипт получает список активных локальных пользователей (исключая системные),
+    генерирует для каждого из них пароль заданной длины и сложности,
+    и сохраняет результат в файл формата "имя<ТАБ>пароль".
 
 .PARAMETER PathToFile
-    Полный путь к файлу, в который будет сохранен список пользователей.
+    Полный путь к файлу, в который будет сохранен список.
 
 .PARAMETER PasswordLength
-    (Необязательный) Длина генерируемых паролей. По умолчанию 16 символов.
+    (Необязательный) Длина генерируемых паролей. По умолчанию 12 символов.
+
+.PARAMETER NoSpecialChars
+    (Необязательный) Если указан этот ключ, пароли будут генерироваться
+    БЕЗ специальных символов (только буквы и цифры).
 
 .EXAMPLE
-    .\Export-UsersForMigration.ps1 -PathToFile "C:\temp\users_to_migrate.txt"
+    # Пример 1: Сгенерировать пароли длиной 8 символов (со спецсимволами)
+    .\Export-UsersForMigration.ps1 -PathToFile "C:\temp\users.txt" -PasswordLength 8
 
 .EXAMPLE
-    .\Export-UsersForMigration.ps1 -PathToFile "C:\temp\users_to_migrate.txt" -PasswordLength 20
+    # Пример 2: Сгенерировать ПРОСТЫЕ пароли длиной 10 символов (БЕЗ спецсимволов)
+    .\Export-UsersForMigration.ps1 -PathToFile "C:\temp\users.txt" -PasswordLength 10 -NoSpecialChars
 #>
 param(
     [Parameter(Mandatory=$true, HelpMessage="Укажите полный путь для сохранения файла.")]
     [string]$PathToFile,
 
     [Parameter(Mandatory=$false, HelpMessage="Длина генерируемых паролей.")]
-    [int]$PasswordLength = 16
+    [int]$PasswordLength = 12,
+
+    [Parameter(Mandatory=$false, HelpMessage="Генерировать пароли без специальных символов.")]
+    [switch]$NoSpecialChars
 )
 
-# --- Встроенная функция для генерации паролей (работает везде) ---
+# --- Новая, простая и надежная функция генерации паролей ---
 function Generate-RandomPassword {
     param(
-        [int]$length = 16
+        [int]$length,
+        [bool]$includeSpecialChars
     )
     # Определяем наборы символов
-    $lowerCase = 'abcdefghijklmnopqrstuvwxyz'
-    $upperCase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-    $numbers = '0123456789'
-    $specialChars = '!@#$%^&*()-_=+'
+    $letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    $numbers = "0123456789"
+    $special = "!@#$%^&*-+=" # Уменьшил количество неоднозначных символов
 
-    # Гарантируем, что в пароле будет хотя бы по одному символу каждого типа
-    $passwordChars = @()
-    $passwordChars += $lowerCase | Get-Random -Count 1
-    $passwordChars += $upperCase | Get-Random -Count 1
-    $passwordChars += $numbers | Get-Random -Count 1
-    $passwordChars += $specialChars | Get-Random -Count 1
-
-    # Заполняем оставшуюся длину случайными символами из всех наборов
-    $allChars = $lowerCase + $upperCase + $numbers + $specialChars
-    $remainingLength = $length - $passwordChars.Count
-    if ($remainingLength -gt 0) {
-        $passwordChars += $allChars | Get-Random -Count $remainingLength
+    # Собираем общий набор символов в зависимости от флага
+    $characterSet = $letters + $numbers
+    if ($includeSpecialChars) {
+        $characterSet += $special
     }
+    
+    # Конвертируем строку в массив символов для надежной работы Get-Random
+    $charArray = $characterSet.ToCharArray()
 
-    # Перемешиваем символы, чтобы они не шли в предсказуемом порядке, и объединяем в строку
-    $finalPassword = ($passwordChars | Get-Random -Count $passwordChars.Count) -join ''
-    return $finalPassword
+    # Генерируем случайную последовательность нужной длины и объединяем в строку
+    $password = -join ($charArray | Get-Random -Count $length)
+    
+    return $password
 }
 # --- Конец функции ---
 
 Write-Host "Начинаю экспорт пользователей..." -ForegroundColor Cyan
 
-# Список системных учетных записей, которые нужно исключить
+# Список системных учетных записей для исключения
 $systemAccounts = @("Administrator", "Guest", "DefaultAccount", "WDAGUtilityAccount", "defaultuser*")
 
 try {
-    # Получаем всех активных локальных пользователей
     $users = Get-LocalUser | Where-Object { $_.Enabled -eq $true }
-
     $outputLines = New-Object System.Collections.Generic.List[string]
 
     foreach ($user in $users) {
-        # Пропускаем системные учетные записи
         if ($systemAccounts -contains $user.Name -or $user.Name -like "defaultuser*") {
             Write-Host "Пропускаю системного пользователя: $($user.Name)" -ForegroundColor Gray
             continue
         }
 
-        # Генерируем пароль с помощью нашей новой функции
-        $newPassword = Generate-RandomPassword -length $PasswordLength
+        # Генерируем пароль, передавая в функцию нужные параметры
+        $newPassword = Generate-RandomPassword -length $PasswordLength -includeSpecialChars (-not $NoSpecialChars)
         
         $line = "$($user.Name)`t$newPassword"
         $outputLines.Add($line)

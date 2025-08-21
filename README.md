@@ -60,6 +60,7 @@ curl https://raw.githubusercontent.com/DIMNISSV/win-create-users/refs/heads/mast
 ```powershell
 .\Create-Users.ps1 -PathToFile "C:\data\users.txt" -Groups "Remote Desktop Users", "Backup Operators"
 ```
+*Или, если на русском:* `"Пользователи удаленного рабочего стола"`
 
 **4. Просто создать пользователей без добавления в группы и с требованием смены пароля:**
 ```powershell

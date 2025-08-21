@@ -5,9 +5,9 @@
 
 .DESCRIPTION
     Этот скрипт предназначен для подготовки к миграции пользователей. Он получает список
-    всех активных локальных пользователей (исключая системные учетные записи),
-    генерирует для каждого из них новый надежный пароль и сохраняет результат
-    в файл формата "имя<ТАБ>пароль", готовый для использования скриптом Create-Users.ps1.
+    всех активных локальных пользователей (исключая системные), генерирует для каждого
+    новый надежный пароль и сохраняет результат в файл формата "имя<ТАБ>пароль".
+    Работает в любой версии PowerShell.
 
 .PARAMETER PathToFile
     Полный путь к файлу, в который будет сохранен список пользователей.
@@ -29,8 +29,36 @@ param(
     [int]$PasswordLength = 16
 )
 
-# Загружаем сборку System.Web для надежной генерации паролей
-Add-Type -AssemblyName System.Web
+# --- Встроенная функция для генерации паролей (работает везде) ---
+function Generate-RandomPassword {
+    param(
+        [int]$length = 16
+    )
+    # Определяем наборы символов
+    $lowerCase = 'abcdefghijklmnopqrstuvwxyz'
+    $upperCase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    $numbers = '0123456789'
+    $specialChars = '!@#$%^&*()-_=+'
+
+    # Гарантируем, что в пароле будет хотя бы по одному символу каждого типа
+    $passwordChars = @()
+    $passwordChars += $lowerCase | Get-Random -Count 1
+    $passwordChars += $upperCase | Get-Random -Count 1
+    $passwordChars += $numbers | Get-Random -Count 1
+    $passwordChars += $specialChars | Get-Random -Count 1
+
+    # Заполняем оставшуюся длину случайными символами из всех наборов
+    $allChars = $lowerCase + $upperCase + $numbers + $specialChars
+    $remainingLength = $length - $passwordChars.Count
+    if ($remainingLength -gt 0) {
+        $passwordChars += $allChars | Get-Random -Count $remainingLength
+    }
+
+    # Перемешиваем символы, чтобы они не шли в предсказуемом порядке, и объединяем в строку
+    $finalPassword = ($passwordChars | Get-Random -Count $passwordChars.Count) -join ''
+    return $finalPassword
+}
+# --- Конец функции ---
 
 Write-Host "Начинаю экспорт пользователей..." -ForegroundColor Cyan
 
@@ -38,10 +66,9 @@ Write-Host "Начинаю экспорт пользователей..." -Foregr
 $systemAccounts = @("Administrator", "Guest", "DefaultAccount", "WDAGUtilityAccount", "defaultuser*")
 
 try {
-    # Получаем всех локальных пользователей, которые активны (Enabled)
+    # Получаем всех активных локальных пользователей
     $users = Get-LocalUser | Where-Object { $_.Enabled -eq $true }
 
-    # Список для хранения строк "имя<ТАБ>пароль"
     $outputLines = New-Object System.Collections.Generic.List[string]
 
     foreach ($user in $users) {
@@ -51,17 +78,15 @@ try {
             continue
         }
 
-        # Генерируем надежный пароль, содержащий как минимум 2 не-буквенно-цифровых символа
-        $newPassword = [System.Web.Security.Membership]::GeneratePassword($PasswordLength, 2)
+        # Генерируем пароль с помощью нашей новой функции
+        $newPassword = Generate-RandomPassword -length $PasswordLength
         
-        # Формируем строку и добавляем в список
         $line = "$($user.Name)`t$newPassword"
         $outputLines.Add($line)
 
         Write-Host "Подготовлен пользователь: $($user.Name)" -ForegroundColor Green
     }
 
-    # Сохраняем все строки в файл
     if ($outputLines.Count -gt 0) {
         $outputLines | Out-File -FilePath $PathToFile -Encoding utf8
         Write-Host "`nУСПЕХ: Данные $($outputLines.Count) пользователей сохранены в файл: $PathToFile" -ForegroundColor Cyan

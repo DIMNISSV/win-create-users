@@ -31,8 +31,6 @@ if (-not (Test-Path $PathToFile)) {
 Write-Host "Начинаю обработку файла: $PathToFile" -ForegroundColor Cyan
 
 # 2. Чтение файла и создание пользователей
-# Import-Csv используется с разделителем "табуляция" (`t)
-# Заголовки "UserName" и "Password" присваиваются столбцам для удобства
 $users = Import-Csv -Path $PathToFile -Delimiter "`t" -Header "UserName", "Password"
 
 foreach ($user in $users) {
@@ -47,7 +45,7 @@ foreach ($user in $users) {
     # Проверяем, существует ли уже такой пользователь
     if (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) {
         Write-Host "Пользователь '$username' уже существует. Пропускаем." -ForegroundColor Yellow
-        continue # Переходим к следующему пользователю в списке
+        continue
     }
 
     # Попытка создания пользователя в блоке try-catch для отлова ошибок
@@ -58,17 +56,21 @@ foreach ($user in $users) {
         # Создание нового локального пользователя
         New-LocalUser -Name $username -Password $securePassword -FullName $username -Description "Создан скриптом $(Get-Date)"
 
-        # Устанавливаем флаг "Требовать смену пароля при следующем входе"
+        # === ИСПРАВЛЕННЫЙ БЛОК ===
+        # Получаем созданный объект пользователя, чтобы изменить его свойства
         $createdUser = Get-LocalUser -Name $username
-        $createdUser.PasswordChangeable = $true
-        $createdUser.PasswordRequired = $true
+        
+        # Устанавливаем флаг "Требовать смену пароля при следующем входе"
+        $createdUser.PasswordChangeRequired = $true
+        
+        # Сохраняем изменения
         $createdUser.Set()
+        # === КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ===
 
         Write-Host "УСПЕХ: Пользователь '$username' успешно создан." -ForegroundColor Green
     }
     catch {
-        # Вывод сообщения об ошибке, если что-то пошло не так
-        # (например, пароль не соответствует политике сложности)
+        # Вывод сообщения об ошибке
         Write-Host "ОШИБКА при создании пользователя '$username':" -ForegroundColor Red
         Write-Host $_.Exception.Message -ForegroundColor Red
     }

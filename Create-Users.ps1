@@ -1,21 +1,37 @@
 <#
 .SYNOPSIS
-    Создает локальных пользователей Windows из текстового файла.
+    Создает локальных пользователей Windows из текстового файла и добавляет их в указанные группы.
 
 .DESCRIPTION
-    Скрипт читает текстовый файл, где каждая строка содержит имя пользователя и пароль, разделенные табуляцией.
-    Он создает локальных пользователей и, используя ADSI, устанавливает требование смены пароля при первом входе.
+    Скрипт читает текстовый файл (формат: имя<ТАБ>пароль).
+    Для каждой строки он создает локального пользователя, устанавливает требование смены пароля при первом входе
+    и опционально добавляет его в одну или несколько локальных групп.
 
 .PARAMETER PathToFile
-    Полный путь к текстовому файлу. Файл должен быть в формате: имя_пользователя<ТАБ>пароль.
+    Полный путь к текстовому файлу с пользователями.
+
+.PARAMETER Groups
+    (Необязательный параметр) Список имен групп через запятую, в которые нужно добавить пользователей.
+    Если группа не существует, будет выведено предупреждение.
 
 .EXAMPLE
-    .\Create-Users.ps1 -PathToFile "C:\temp\users.txt"
-    Эта команда запустит скрипт и будет использовать файл users.txt для создания пользователей.
+    # Пример 1: Создать пользователей без добавления в группы
+    .\Create-Users.ps1 -PathToFile "C:\data\new_users.txt"
+
+.EXAMPLE
+    # Пример 2: Создать пользователей и добавить их в одну группу
+    .\Create-Users.ps1 -PathToFile "C:\data\new_users.txt" -Groups "Remote Desktop Users"
+
+.EXAMPLE
+    # Пример 3: Создать пользователей и добавить их в несколько групп
+    .\Create-Users.ps1 -PathToFile "C:\data\new_users.txt" -Groups "Remote Desktop Users", "Backup Operators"
 #>
 param(
     [Parameter(Mandatory=$true, HelpMessage="Укажите полный путь к текстовому файлу с пользователями.")]
-    [string]$PathToFile
+    [string]$PathToFile,
+
+    [Parameter(Mandatory=$false, HelpMessage="Укажите через запятую группы, в которые нужно добавить пользователей.")]
+    [string[]]$Groups = @() # По умолчанию - пустой список
 )
 
 # ===================================================================
@@ -29,6 +45,9 @@ if (-not (Test-Path $PathToFile)) {
 }
 
 Write-Host "Начинаю обработку файла: $PathToFile" -ForegroundColor Cyan
+if ($Groups.Count -gt 0) {
+    Write-Host "Новые пользователи будут добавлены в следующие группы: $($Groups -join ', ')" -ForegroundColor Cyan
+}
 
 # 2. Чтение файла и создание пользователей
 $users = Import-Csv -Path $PathToFile -Delimiter "`t" -Header "UserName", "Password"
@@ -38,7 +57,7 @@ foreach ($user in $users) {
         continue
     }
 
-    $username = $user.UserName.Trim() # Добавим Trim на всякий случай
+    $username = $user.UserName.Trim()
     $password = $user.Password
 
     if (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) {
@@ -47,28 +66,36 @@ foreach ($user in $users) {
     }
 
     try {
-        # Шаг 1: Преобразование пароля и создание пользователя
+        # Шаг 1: Создание пользователя
         $securePassword = ConvertTo-SecureString -String $password -AsPlainText -Force
         New-LocalUser -Name $username -Password $securePassword -FullName $username -Description "Создан скриптом $(Get-Date)"
 
-        # === НАДЕЖНЫЙ МЕТОД ЧЕРЕЗ ADSI ===
-        # Шаг 2: Получаем доступ к пользователю через ADSI
-        $adsiUser = [ADSI]"WinNT://localhost/$username,user"
-        
-        # Шаг 3: Устанавливаем свойство 'PasswordExpired' в 1. Это заставит систему
-        # потребовать смену пароля при следующем входе.
-        $adsiUser.psbase.InvokeSet("PasswordExpired", 1)
-        
-        # Шаг 4: Сохраняем изменения
-        $adsiUser.CommitChanges()
-        # === КОНЕЦ БЛОКА ADSI ===
+        Write-Host "УСПЕХ: Пользователь '$username' успешно создан." -ForegroundColor Green
 
-        Write-Host "УСПЕХ: Пользователь '$username' успешно создан. Установлено требование смены пароля." -ForegroundColor Green
+        # Шаг 2: Установка требования смены пароля через ADSI
+        $adsiUser = [ADSI]"WinNT://localhost/$username,user"
+        $adsiUser.psbase.InvokeSet("PasswordExpired", 1)
+        $adsiUser.CommitChanges()
+        Write-Host "  -> Установлено требование смены пароля при следующем входе." -ForegroundColor Green
+        
+        # Шаг 3: Добавление в группы, если они были указаны
+        if ($Groups.Count -gt 0) {
+            foreach ($groupName in $Groups) {
+                # Проверяем, существует ли группа, перед добавлением
+                if (Get-LocalGroup -Name $groupName -ErrorAction SilentlyContinue) {
+                    Add-LocalGroupMember -Group $groupName -Member $username
+                    Write-Host "  -> Успешно добавлен в группу '$groupName'." -ForegroundColor Green
+                } else {
+                    Write-Host "  -> ПРЕДУПРЕЖДЕНИЕ: Группа '$groupName' не найдена. Пропускаем." -ForegroundColor Yellow
+                }
+            }
+        }
     }
     catch {
-        Write-Host "ОШИБКА при создании пользователя '$username':" -ForegroundColor Red
+        Write-Host "ОШИБКА при обработке пользователя '$username':" -ForegroundColor Red
         Write-Host $_.Exception.Message -ForegroundColor Red
     }
+    Write-Host "" # Добавляем пустую строку для лучшей читаемости вывода
 }
 
 Write-Host "`nОбработка завершена." -ForegroundColor Cyan

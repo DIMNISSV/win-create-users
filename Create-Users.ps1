@@ -1,37 +1,44 @@
 <#
 .SYNOPSIS
-    Создает локальных пользователей Windows из текстового файла и добавляет их в указанные группы.
+    Создает локальных пользователей Windows из текстового файла, добавляет их в группы и управляет требованием смены пароля.
 
 .DESCRIPTION
     Скрипт читает текстовый файл (формат: имя<ТАБ>пароль).
-    Для каждой строки он создает локального пользователя, устанавливает требование смены пароля при первом входе
-    и опционально добавляет его в одну или несколько локальных групп.
+    Для каждой строки он создает пользователя и опционально добавляет его в группы.
+    Управляет требованием смены пароля при первом входе через параметр -ForcePasswordChange.
 
 .PARAMETER PathToFile
     Полный путь к текстовому файлу с пользователями.
 
 .PARAMETER Groups
-    (Необязательный параметр) Список имен групп через запятую, в которые нужно добавить пользователей.
-    Если группа не существует, будет выведено предупреждение.
+    (Необязательный) Список имен групп через запятую, в которые нужно добавить пользователей.
+
+.PARAMETER ForcePasswordChange
+    (Необязательный) Определяет, нужно ли требовать смену пароля.
+    $true (по умолчанию) - пользователь должен будет сменить пароль при первом входе.
+    $false - пароль устанавливается как постоянный.
 
 .EXAMPLE
-    # Пример 1: Создать пользователей без добавления в группы
-    .\Create-Users.ps1 -PathToFile "C:\data\new_users.txt"
+    # Пример 1: Создать пользователей и потребовать смену пароля (поведение по умолчанию)
+    .\Create-Users.ps1 -PathToFile "C:\data\temps.txt" -Groups "Remote Desktop Users"
 
 .EXAMPLE
-    # Пример 2: Создать пользователей и добавить их в одну группу
-    .\Create-Users.ps1 -PathToFile "C:\data\new_users.txt" -Groups "Remote Desktop Users"
+    # Пример 2: Создать пользователей с постоянными паролями без требования смены
+    .\Create-Users.ps1 -PathToFile "C:\data\admins.txt" -ForcePasswordChange:$false
 
 .EXAMPLE
-    # Пример 3: Создать пользователей и добавить их в несколько групп
-    .\Create-Users.ps1 -PathToFile "C:\data\new_users.txt" -Groups "Remote Desktop Users", "Backup Operators"
+    # Пример 3: Создать пользователей с постоянными паролями и добавить в несколько групп
+    .\Create-Users.ps1 -PathToFile "C:\data\powerusers.txt" -Groups "Remote Desktop Users", "Power Users" -ForcePasswordChange:$false
 #>
 param(
     [Parameter(Mandatory=$true, HelpMessage="Укажите полный путь к текстовому файлу с пользователями.")]
     [string]$PathToFile,
 
     [Parameter(Mandatory=$false, HelpMessage="Укажите через запятую группы, в которые нужно добавить пользователей.")]
-    [string[]]$Groups = @() # По умолчанию - пустой список
+    [string[]]$Groups = @(),
+
+    [Parameter(Mandatory=$false, HelpMessage="Установить требование смены пароля при первом входе.")]
+    [bool]$ForcePasswordChange = $true # По умолчанию - ТРЕБУЕМ смену пароля
 )
 
 # ===================================================================
@@ -46,7 +53,7 @@ if (-not (Test-Path $PathToFile)) {
 
 Write-Host "Начинаю обработку файла: $PathToFile" -ForegroundColor Cyan
 if ($Groups.Count -gt 0) {
-    Write-Host "Новые пользователи будут добавлены в следующие группы: $($Groups -join ', ')" -ForegroundColor Cyan
+    Write-Host "Новые пользователи будут добавлены в группы: $($Groups -join ', ')" -ForegroundColor Cyan
 }
 
 # 2. Чтение файла и создание пользователей
@@ -72,16 +79,20 @@ foreach ($user in $users) {
 
         Write-Host "УСПЕХ: Пользователь '$username' успешно создан." -ForegroundColor Green
 
-        # Шаг 2: Установка требования смены пароля через ADSI
-        $adsiUser = [ADSI]"WinNT://localhost/$username,user"
-        $adsiUser.psbase.InvokeSet("PasswordExpired", 1)
-        $adsiUser.CommitChanges()
-        Write-Host "  -> Установлено требование смены пароля при следующем входе." -ForegroundColor Green
+        # === НОВЫЙ БЛОК: Управление сменой пароля ===
+        # Шаг 2: Устанавливаем требование смены пароля, только если параметр $ForcePasswordChange равен $true
+        if ($ForcePasswordChange) {
+            $adsiUser = [ADSI]"WinNT://localhost/$username,user"
+            $adsiUser.psbase.InvokeSet("PasswordExpired", 1)
+            $adsiUser.CommitChanges()
+            Write-Host "  -> Установлено требование смены пароля при следующем входе." -ForegroundColor Green
+        } else {
+            Write-Host "  -> Пароль установлен как постоянный (смена не требуется)." -ForegroundColor Gray
+        }
         
         # Шаг 3: Добавление в группы, если они были указаны
         if ($Groups.Count -gt 0) {
             foreach ($groupName in $Groups) {
-                # Проверяем, существует ли группа, перед добавлением
                 if (Get-LocalGroup -Name $groupName -ErrorAction SilentlyContinue) {
                     Add-LocalGroupMember -Group $groupName -Member $username
                     Write-Host "  -> Успешно добавлен в группу '$groupName'." -ForegroundColor Green

@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Скрипт читает текстовый файл, где каждая строка содержит имя пользователя и пароль, разделенные табуляцией.
-    Он создает локальных пользователей с указанными данными и устанавливает требование смены пароля при первом входе.
+    Он создает локальных пользователей и, используя ADSI, устанавливает требование смены пароля при первом входе.
 
 .PARAMETER PathToFile
     Полный путь к текстовому файлу. Файл должен быть в формате: имя_пользователя<ТАБ>пароль.
@@ -22,10 +22,10 @@ param(
 #               Основная логика скрипта
 # ===================================================================
 
-# 1. Проверка, существует ли файл, указанный в аргументе
+# 1. Проверка, существует ли файл
 if (-not (Test-Path $PathToFile)) {
     Write-Host "Ошибка: Файл не найден по пути: '$PathToFile'" -ForegroundColor Red
-    exit # Прекращаем выполнение, если файл не найден
+    exit
 }
 
 Write-Host "Начинаю обработку файла: $PathToFile" -ForegroundColor Cyan
@@ -34,43 +34,38 @@ Write-Host "Начинаю обработку файла: $PathToFile" -Foregrou
 $users = Import-Csv -Path $PathToFile -Delimiter "`t" -Header "UserName", "Password"
 
 foreach ($user in $users) {
-    # Пропускаем пустые строки в файле, если они есть
     if ([string]::IsNullOrWhiteSpace($user.UserName)) {
         continue
     }
 
-    $username = $user.UserName
+    $username = $user.UserName.Trim() # Добавим Trim на всякий случай
     $password = $user.Password
 
-    # Проверяем, существует ли уже такой пользователь
     if (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) {
         Write-Host "Пользователь '$username' уже существует. Пропускаем." -ForegroundColor Yellow
         continue
     }
 
-    # Попытка создания пользователя в блоке try-catch для отлова ошибок
     try {
-        # Пароль необходимо преобразовать в безопасную строку (SecureString)
+        # Шаг 1: Преобразование пароля и создание пользователя
         $securePassword = ConvertTo-SecureString -String $password -AsPlainText -Force
-
-        # Создание нового локального пользователя
         New-LocalUser -Name $username -Password $securePassword -FullName $username -Description "Создан скриптом $(Get-Date)"
 
-        # === ИСПРАВЛЕННЫЙ БЛОК ===
-        # Получаем созданный объект пользователя, чтобы изменить его свойства
-        $createdUser = Get-LocalUser -Name $username
+        # === НАДЕЖНЫЙ МЕТОД ЧЕРЕЗ ADSI ===
+        # Шаг 2: Получаем доступ к пользователю через ADSI
+        $adsiUser = [ADSI]"WinNT://localhost/$username,user"
         
-        # Устанавливаем флаг "Требовать смену пароля при следующем входе"
-        $createdUser.PasswordChangeRequired = $true
+        # Шаг 3: Устанавливаем свойство 'PasswordExpired' в 1. Это заставит систему
+        # потребовать смену пароля при следующем входе.
+        $adsiUser.psbase.InvokeSet("PasswordExpired", 1)
         
-        # Сохраняем изменения
-        $createdUser.Set()
-        # === КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ===
+        # Шаг 4: Сохраняем изменения
+        $adsiUser.CommitChanges()
+        # === КОНЕЦ БЛОКА ADSI ===
 
-        Write-Host "УСПЕХ: Пользователь '$username' успешно создан." -ForegroundColor Green
+        Write-Host "УСПЕХ: Пользователь '$username' успешно создан. Установлено требование смены пароля." -ForegroundColor Green
     }
     catch {
-        # Вывод сообщения об ошибке
         Write-Host "ОШИБКА при создании пользователя '$username':" -ForegroundColor Red
         Write-Host $_.Exception.Message -ForegroundColor Red
     }

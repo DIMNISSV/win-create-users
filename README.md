@@ -38,7 +38,7 @@
     **Пример содержимого `users.txt`:**
     ```tsv
     Имя	Полное имя	Описание
-    Ackarova	Anna Ackarova	G3UBQR~m0nba4%vMy%o7
+    Ackarova	Anna Ackarova	!h5*Fp!2kL9@b=3
     Ivanov	Ivan Ivanov	!h5*Fp!2kL9@b=R
     Petrov	Petr Petrov	zX9vC1qWnK4p
     ```
